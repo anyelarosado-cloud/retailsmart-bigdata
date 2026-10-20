@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RetailSmart: panel de datos</title>
+<style>
+  :root { --fondo:#f6f7f9; --tarjeta:#fff; --texto:#1f2933; --tenue:#667085; --borde:#d8dde3; --barra:#2f6fdb; --alerta:#b42318; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fondo:#14171c; --tarjeta:#1d2128; --texto:#e6e9ee; --tenue:#98a2b3; --borde:#323943; --barra:#6aa0ff; --alerta:#f97066; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px; background:var(--fondo); color:var(--texto); font:15px/1.45 system-ui, sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:16px; align-items:end; justify-content:space-between; margin-bottom:20px; }
+  h1 { font-size:20px; margin:0 0 2px; }
+  .sub { color:var(--tenue); font-size:13px; }
+  .controles { display:flex; flex-wrap:wrap; gap:12px; }
+  label { display:flex; flex-direction:column; font-size:12px; color:var(--tenue); gap:4px; }
+  select { padding:6px 8px; border:1px solid var(--borde); border-radius:6px; background:var(--tarjeta); color:var(--texto); font:inherit; }
+  main { display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:16px; }
+  section { background:var(--tarjeta); border:1px solid var(--borde); border-radius:10px; padding:16px; min-width:0; }
+  h2 { font-size:15px; margin:0 0 12px; }
+  .fila { display:grid; grid-template-columns:110px 1fr 56px; gap:8px; align-items:center; margin:6px 0; }
+  .pista { background:var(--fondo); border-radius:4px; height:14px; overflow:hidden; }
+  .barra { background:var(--barra); height:100%; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 4px; border-bottom:1px solid var(--borde); vertical-align:top; }
+  td.num, th.num { text-align:right; }
+  .vacio { color:var(--tenue); font-size:13px; }
+  .error { color:var(--alerta); font-size:13px; }
+  footer { margin-top:16px; color:var(--tenue); font-size:12px; }
+  .ancho { grid-column:1 / -1; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>RetailSmart: panel de datos</h1>
+    <div class="sub">Consume la API de RetailSmart (zona Smart y agregados en tiempo real)</div>
+  </div>
+  <div class="controles">
+    <label>Ventana en tiempo real
+      <select id="minutos">
+        <option value="5" selected>Últimos 5 minutos</option>
+        <option value="15">Últimos 15 minutos</option>
+        <option value="60">Última hora</option>
+        <option value="600">Últimas 10 horas</option>
+      </select>
+    </label>
+    <label>País
+      <select id="pais">
+        <option value="" selected>Todos</option>
+        <option>Brazil</option><option>China</option><option>United States</option>
+        <option>United Kingdom</option><option>South Korea</option><option>France</option>
+        <option>Germany</option><option>Spain</option><option>Japan</option><option>Australia</option>
+      </select>
+    </label>
+    <label>Moneda (ventas)
+      <select id="moneda">
+        <option value="" selected>Todas</option>
+        <option>BRL</option><option>GBP</option><option>USD</option>
+      </select>
+    </label>
+  </div>
+</header>
+<main>
+  <section>
+    <h2>Eventos por tipo</h2>
+    <div id="eventos" class="vacio">Cargando…</div>
+  </section>
+  <section>
+    <h2>Productos más vistos</h2>
+    <div id="productos" class="vacio">Cargando…</div>
+  </section>
+  <section class="ancho">
+    <h2>Ventas por región</h2>
+    <div id="ventas" class="vacio">Cargando…</div>
+    <div class="sub">Los montos están en la moneda de origen y no se suman entre monedas.</div>
+  </section>
+</main>
+<footer id="estado"></footer>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var fmt = new Intl.NumberFormat("es-PE");
+
+  function parametros(extra) {
+    var q = new URLSearchParams(extra || {});
+    return q.toString();
+  }
+
+  function pedir(ruta, extra) {
+    var qs = parametros(extra);
+    return fetch(ruta + (qs ? "?" + qs : "")).then(function (r) {
+      if (!r.ok) { throw new Error(ruta + " respondió " + r.status); }
+      return r.json();
+    });
+  }
+
+  function mostrarError(destino, e) {
+    destino.className = "error";
+    destino.textContent = "No se pudo cargar: " + e.message;
+  }
+
+  function nodo(tag, texto, clase) {
+    var n = document.createElement(tag);
+    if (texto !== undefined) { n.textContent = texto; }
+    if (clase) { n.className = clase; }
+    return n;
+  }
+
+  function dibujarEventos(datos) {
+    var cont = $("eventos");
+    cont.className = ""; cont.textContent = "";
+    var filas = datos.resultados || [];
+    if (!filas.length) {
+      cont.className = "vacio";
+      cont.textContent = "Sin eventos en esta ventana. El pipeline de streaming debe estar corriendo.";
+      return;
+    }
+    var maximo = Math.max.apply(null, filas.map(function (f) { return f.eventos; }));
+    filas.forEach(function (f) {
+      var fila = nodo("div", undefined, "fila");
+      var pista = nodo("div", undefined, "pista");
+      var barra = nodo("div", undefined, "barra");
+      barra.style.width = (maximo ? (100 * f.eventos / maximo) : 0) + "%";
+      pista.appendChild(barra);
+      fila.appendChild(nodo("div", f.event_type));
+      fila.appendChild(pista);
+      fila.appendChild(nodo("div", fmt.format(f.eventos), "num"));
+      cont.appendChild(fila);
+    });
+  }
+
+  function tabla(cabeceras, filas) {
+    var t = nodo("table");
+    var cab = nodo("tr");
+    cabeceras.forEach(function (c) { cab.appendChild(nodo("th", c.titulo, c.num ? "num" : "")); });
+    t.appendChild(cab);
+    filas.forEach(function (f) {
+      var tr = nodo("tr");
+      cabeceras.forEach(function (c) { tr.appendChild(nodo("td", c.valor(f), c.num ? "num" : "")); });
+      t.appendChild(tr);
+    });
+    return t;
+  }
+
+  function dibujarProductos(datos) {
+    var cont = $("productos");
+    cont.className = ""; cont.textContent = "";
+    var filas = datos.resultados || [];
+    if (!filas.length) {
+      cont.className = "vacio";
+      cont.textContent = "Sin visitas a productos en esta ventana.";
+      return;
+    }
+    cont.appendChild(tabla([
+      { titulo: "Producto", valor: function (f) { return f.nombre || ("id " + f.producto_id); } },
+      { titulo: "Unidad", valor: function (f) { return f.unidad_negocio || "-"; } },
+      { titulo: "Visitas", num: true, valor: function (f) { return fmt.format(f.vistas); } }
+    ], filas));
+  }
+
+  function dibujarVentas(datos) {
+    var cont = $("ventas");
+    cont.className = ""; cont.textContent = "";
+    var filas = datos.resultados || [];
+    if (!filas.length) { cont.className = "vacio"; cont.textContent = "Sin ventas para este filtro."; return; }
+    cont.appendChild(tabla([
+      { titulo: "Región", valor: function (f) { return f.region; } },
+      { titulo: "Moneda", valor: function (f) { return f.moneda; } },
+      { titulo: "Líneas", num: true, valor: function (f) { return fmt.format(f.lineas); } },
+      { titulo: "Monto", num: true, valor: function (f) { return fmt.format(f.monto); } }
+    ], filas));
+  }
+
+  function cargarTiempoReal() {
+    var comun = { minutos: $("minutos").value };
+    if ($("pais").value) { comun.pais = $("pais").value; }
+    var conLimite = Object.assign({ limite: 8 }, comun);
+    var p1 = pedir("/v1/tiempo-real/eventos", comun).then(dibujarEventos).catch(function (e) { mostrarError($("eventos"), e); });
+    var p2 = pedir("/v1/tiempo-real/productos-top", conLimite).then(dibujarProductos).catch(function (e) { mostrarError($("productos"), e); });
+    return Promise.all([p1, p2]).then(function () {
+      $("estado").textContent = "Última actualización: " + new Date().toLocaleTimeString("es-PE") + " (cada 5 segundos)";
+    });
+  }
+
+  function cargarVentas() {
+    var extra = {};
+    if ($("moneda").value) { extra.moneda = $("moneda").value; }
+    return pedir("/v1/ventas/resumen", extra).then(dibujarVentas).catch(function (e) { mostrarError($("ventas"), e); });
+  }
+
+  $("minutos").addEventListener("change", cargarTiempoReal);
+  $("pais").addEventListener("change", cargarTiempoReal);
+  $("moneda").addEventListener("change", cargarVentas);
+
+  cargarTiempoReal();
+  cargarVentas();
+  setInterval(cargarTiempoReal, 5000);
+})();
+</script>
+</body>
+</html>

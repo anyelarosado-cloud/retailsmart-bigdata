@@ -1,0 +1,28 @@
+data_product: gold_comercial_fact_ventas
+domain: comercial
+owner: por definir
+version: 1.0.0
+grain: una línea de venta por fuente
+schema:
+  - { name: fuente, type: string, nullable: false }
+  - { name: id_pedido, type: string, nullable: false }
+  - { name: fecha_sk, type: int, nullable: false }
+  - { name: producto_sk, type: bigint, nullable: false }
+  - { name: cliente_sk, type: bigint, nullable: true }
+  - { name: geo_sk, type: bigint, nullable: false }
+  - { name: canal_sk, type: int, nullable: false }
+  - { name: cantidad, type: int, nullable: false }
+  - { name: monto, type: double, nullable: false }
+  - { name: moneda, type: string, nullable: false }
+slos:
+  freshness: "T+1d 08:00"
+  completeness: ">= 99.5%"
+  availability: ">= 99.9%"
+quality_tests:
+  - not_null: [fuente, id_pedido, fecha_sk, producto_sk, geo_sk, canal_sk, moneda]
+  - accepted_values: { column: moneda, values: [BRL, GBP, USD] }
+  - relationships: { producto_sk: dim_producto, geo_sk: dim_geo, fecha_sk: dim_fecha, canal_sk: dim_canal }
+security:
+  classification: "Interno"
+breaking_changes:
+  policy: "minor=compatible, major=incompatible; notificar antes de publicar"
