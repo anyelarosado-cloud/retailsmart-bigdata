@@ -1,6 +1,6 @@
-# RetailSmart Global: plataforma de datos (Lumina Retail)
+# RetailSmart Global: plataforma de datos
 
-Back-end de datos para RetailSmart: integra tres fuentes públicas y tres fuentes simuladas en un Lakehouse, procesa en batch y en streaming, y expone los resultados mediante una API y un panel web. El diseño está en `docs/RetailSmart_Diseno_Arquitectura_End_to_End_Ingesta_Storage.docx` y en `docs/RetailSmart_Documento_Sustentacion_Tecnica_Economica_Resiliencia.docx`; el registro de lo ejecutado, con comandos y resultados, en `docs/bitacora_implementacion.md`; los diagramas editables, en `docs/diagramas/`.
+Back-end de datos para RetailSmart: integra tres fuentes públicas y tres fuentes simuladas en un Lakehouse, procesa en batch y en streaming, y expone los resultados mediante una API y un panel web. 
 
 ## Arquitectura
 
@@ -36,7 +36,6 @@ Los clics se reproducen hacia Pub/Sub con marcas de tiempo actuales (`ingesta/pr
 ```
 api/          API FastAPI, panel web, Dockerfile y pruebas
 contratos/    contrato de datos de fact_ventas y reglas de calidad
-docs/         diseño, bitácora de implementación y diagramas (draw.io)
 ingesta/      productor de clics y simulador de ERP, sensores y GPS
 spark/        notebooks de Landing -> Universal -> Smart (00 a 05)
 sql/          metadatos de Smart, consultas de verificación y pronóstico de demanda
