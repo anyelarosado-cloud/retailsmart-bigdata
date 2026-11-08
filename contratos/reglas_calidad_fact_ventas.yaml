@@ -1,0 +1,32 @@
+# Reglas de calidad de fact_ventas para el escaneo de calidad de datos (plan B por línea de comandos).
+# No probado contra el proyecto: si la consola acepta crear el escaneo desde la interfaz, usa las reglas
+# de la Tabla 28 del informe; este archivo contiene las mismas reglas.
+rules:
+- {column: fuente, dimension: COMPLETENESS, nonNullExpectation: {}}
+- {column: id_pedido, dimension: COMPLETENESS, nonNullExpectation: {}}
+- {column: fecha_sk, dimension: COMPLETENESS, nonNullExpectation: {}}
+- {column: producto_sk, dimension: COMPLETENESS, nonNullExpectation: {}}
+- {column: geo_sk, dimension: COMPLETENESS, nonNullExpectation: {}}
+- {column: canal_sk, dimension: COMPLETENESS, nonNullExpectation: {}}
+- {column: cantidad, dimension: COMPLETENESS, nonNullExpectation: {}}
+- {column: monto, dimension: COMPLETENESS, nonNullExpectation: {}}
+- {column: moneda, dimension: COMPLETENESS, nonNullExpectation: {}}
+- column: moneda
+  dimension: VALIDITY
+  setExpectation:
+    values: [BRL, GBP, USD]
+- dimension: UNIQUENESS
+  sqlAssertion:
+    sqlStatement: "SELECT fuente, id_pedido, id_linea FROM ${data()} GROUP BY 1, 2, 3 HAVING COUNT(*) > 1"
+- dimension: VALIDITY
+  sqlAssertion:
+    sqlStatement: "SELECT f.producto_sk FROM ${data()} f LEFT JOIN `retailsmart-bd.retailsmart_smart.dim_producto` p ON f.producto_sk = p.producto_sk WHERE p.producto_sk IS NULL"
+- dimension: VALIDITY
+  sqlAssertion:
+    sqlStatement: "SELECT f.geo_sk FROM ${data()} f LEFT JOIN `retailsmart-bd.retailsmart_smart.dim_geo` g ON f.geo_sk = g.geo_sk WHERE g.geo_sk IS NULL"
+- dimension: VALIDITY
+  sqlAssertion:
+    sqlStatement: "SELECT f.fecha_sk FROM ${data()} f LEFT JOIN `retailsmart-bd.retailsmart_smart.dim_fecha` d ON f.fecha_sk = d.fecha_sk WHERE d.fecha_sk IS NULL"
+- dimension: VALIDITY
+  sqlAssertion:
+    sqlStatement: "SELECT f.canal_sk FROM ${data()} f LEFT JOIN `retailsmart-bd.retailsmart_smart.dim_canal` c ON f.canal_sk = c.canal_sk WHERE c.canal_sk IS NULL"
