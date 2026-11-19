@@ -1,0 +1,38 @@
+# Documentación (no se publica en el repositorio)
+docs/
+
+# Credenciales y secretos: nunca se suben
+*.json.key
+*-key.json
+service-account*.json
+credentials*.json
+.env
+.env.*
+*.pem
+*.p12
+
+# Datos generados y evidencias locales
+*.csv
+*.parquet
+*.zip
+verdad_fallas.json
+datos_simulados/
+tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Terraform (si se agrega)
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Sistema y editores
+.DS_Store
+.idea/
+.vscode/
