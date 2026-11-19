@@ -1,11 +1,15 @@
+import logging
 import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
+from pydantic import BaseModel
+
+import agente as agente_ia
 
 PROYECTO = os.environ.get("PROYECTO", "retailsmart-bd")
 DS = f"{PROYECTO}.retailsmart_smart"
@@ -129,3 +133,24 @@ def productos_top(
     except NotFound:
         filas = []
     return {"minutos": minutos, "pais": pais, "limite": limite, "resultados": filas}
+
+
+class Pregunta(BaseModel):
+    pregunta: str
+
+
+_limite = agente_ia.LimiteDeUso()
+
+
+@app.post("/v1/agente", tags=["agente"])
+def preguntar_al_agente(cuerpo: Pregunta):
+    """Responde una pregunta del negocio con Gemini y herramientas de solo lectura sobre BigQuery."""
+    if not _limite.permitir():
+        raise HTTPException(status_code=429, detail="Demasiadas preguntas por minuto. Intenta de nuevo.")
+    try:
+        return agente_ia.responder(cuerpo.pregunta, consultar, texto, entero)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception:
+        logging.exception("Fallo del agente")
+        raise HTTPException(status_code=502, detail="El agente no está disponible en este momento.")

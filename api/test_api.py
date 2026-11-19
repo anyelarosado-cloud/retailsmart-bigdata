@@ -56,3 +56,87 @@ def test_panel_se_sirve_y_usa_rutas_de_la_api():
     assert r.status_code == 200 and "text/html" in r.headers["content-type"]
     for ruta in ["/v1/tiempo-real/eventos", "/v1/tiempo-real/productos-top", "/v1/ventas/resumen"]:
         assert ruta in r.text
+
+
+# ---------- agente ----------
+import agente
+from google.genai import types as gtypes
+
+
+class FakeModelos:
+    """Simula a Gemini: llama a una herramienta y devuelve texto. No usa red."""
+    def __init__(self, herramienta, args):
+        self.herramienta, self.args = herramienta, args
+
+    def generate_content(self, model, contents, config):
+        f = {t.__name__: t for t in config.tools}[self.herramienta]
+        datos = f(**self.args)
+        return type("R", (), {"text": f"Respuesta con {len(datos['filas'])} filas" if "filas" in datos else "texto"})()
+
+
+class FakeCliente:
+    def __init__(self, herramienta, args):
+        self.models = FakeModelos(herramienta, args)
+
+
+def test_agente_plan_usa_parametros_y_registra_traza():
+    llamadas.clear()
+    r = agente.responder("¿Qué reponer en el centro 3?", main.consultar, main.texto, main.entero,
+                         cliente=FakeCliente("plan_reposicion", {"centro_id": "3", "limite": 5}))
+    assert r["herramientas"][0]["herramienta"] == "plan_reposicion"
+    sql, params = llamadas[-1]
+    assert params == {"centro": "3", "categoria": None, "limite": 5}
+    assert "@centro" in sql and "3" not in sql.replace("30", "")  # el valor va como parámetro, no en el SQL
+
+
+def test_agente_limita_el_tope_de_filas():
+    llamadas.clear()
+    agente.responder("x", main.consultar, main.texto, main.entero,
+                     cliente=FakeCliente("plan_reposicion", {"limite": 9999}))
+    assert llamadas[-1][1]["limite"] == 30
+
+
+def test_agente_rechaza_pregunta_vacia_o_larga():
+    for p in ("   ", "a" * 501):
+        try:
+            agente.responder(p, main.consultar, main.texto, main.entero, cliente=FakeCliente("metodologia", {}))
+            assert False
+        except ValueError:
+            pass
+
+
+def test_metodologia_reporta_wape_sin_maquillar():
+    traza = []
+    h = {f.__name__: f for f in agente.construir_herramientas(main.consultar, main.texto, main.entero, traza)}
+    t = h["metodologia"]("validacion")["texto"]
+    assert "0,238" in t and "0,209" in t and "NO supera" in t
+
+
+def test_limite_de_uso():
+    t = [0.0]
+    lim = agente.LimiteDeUso(maximo=2, reloj=lambda: t[0])
+    assert lim.permitir() and lim.permitir() and not lim.permitir()
+    t[0] = 61
+    assert lim.permitir()
+
+
+def test_endpoint_agente(monkeypatch):
+    monkeypatch.setattr(agente, "responder", lambda *a, **k: {"respuesta": "ok", "herramientas": [], "modelo": "m"})
+    assert c.post("/v1/agente", json={"pregunta": "hola"}).json()["respuesta"] == "ok"
+    monkeypatch.setattr(agente, "responder", lambda *a, **k: (_ for _ in ()).throw(ValueError("vacía")))
+    assert c.post("/v1/agente", json={"pregunta": " "}).status_code == 422
+    monkeypatch.setattr(agente, "responder", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    assert c.post("/v1/agente", json={"pregunta": "hola"}).status_code == 502
+
+
+def test_plan_marca_truncado_y_hay_herramienta_por_categoria(monkeypatch):
+    filas = [{"categoria": "Swim", "reposicion_sugerida": 14, "filas_totales": 4}]
+    r = agente.construir_herramientas(lambda sql, p: filas, main.texto, main.entero, [])
+    h = {f.__name__: f for f in r}
+    out = h["plan_reposicion"](categoria="Swim", limite=1)
+    assert out["truncado"] is True and out["filas_totales"] == 4 and out["filas_devueltas"] == 1
+    assert "reposicion_por_categoria" in h
+    llamadas.clear()
+    h2 = {f.__name__: f for f in agente.construir_herramientas(main.consultar, main.texto, main.entero, [])}
+    h2["reposicion_por_categoria"](limite=5)
+    assert "SUM(reposicion_sugerida)" in llamadas[-1][0] and llamadas[-1][1] == {"limite": 5}

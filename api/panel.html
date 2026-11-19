@@ -31,6 +31,13 @@
   .error { color:var(--alerta); font-size:13px; }
   footer { margin-top:16px; color:var(--tenue); font-size:12px; }
   .ancho { grid-column:1 / -1; }
+
+  #agente { display:flex; flex-direction:column; gap:8px; }
+  #agente form { display:flex; gap:8px; }
+  #agente input { flex:1; padding:8px; font:inherit; }
+  #agente button { padding:8px 14px; font:inherit; cursor:pointer; }
+  #respuesta { white-space:pre-wrap; min-height:3em; }
+  #herr { color:#666; font-size:.85em; }
 </style>
 </head>
 <body>
@@ -77,6 +84,19 @@
     <h2>Ventas por región</h2>
     <div id="ventas" class="vacio">Cargando…</div>
     <div class="sub">Los montos están en la moneda de origen y no se suman entre monedas.</div>
+  </section>
+  <section class="ancho">
+    <h2>Asistente de reposición (IA generativa)</h2>
+    <div id="agente">
+      <form id="form-agente">
+        <input id="pregunta" maxlength="500" autocomplete="off"
+               placeholder="Por ejemplo: ¿Qué debo reponer primero en el centro 3 y por qué?">
+        <button id="enviar" type="submit">Preguntar</button>
+      </form>
+      <div id="respuesta" class="vacio">Pregunta por reposición, pronóstico, alertas de frío o ventas.</div>
+      <div id="herr"></div>
+    </div>
+    <div class="sub">Las cifras salen de BigQuery mediante herramientas de solo lectura; el modelo no escribe SQL.</div>
   </section>
 </main>
 <footer id="estado"></footer>
@@ -195,6 +215,31 @@
   $("minutos").addEventListener("change", cargarTiempoReal);
   $("pais").addEventListener("change", cargarTiempoReal);
   $("moneda").addEventListener("change", cargarVentas);
+
+  $("form-agente").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var q = $("pregunta").value.trim();
+    if (!q) { return; }
+    $("enviar").disabled = true;
+    $("respuesta").className = "vacio";
+    $("respuesta").textContent = "Consultando…";
+    $("herr").textContent = "";
+    fetch("/v1/agente", {method: "POST", headers: {"Content-Type": "application/json"},
+                         body: JSON.stringify({pregunta: q})})
+      .then(function (r) {
+        return r.json().then(function (j) {
+          if (!r.ok) { throw new Error(j.detail || ("error " + r.status)); }
+          return j;
+        });
+      })
+      .then(function (j) {
+        $("respuesta").className = "";
+        $("respuesta").textContent = j.respuesta;
+        $("herr").textContent = "Herramientas: " + (j.herramientas.map(function (h) { return h.herramienta; }).join(", ") || "ninguna");
+      })
+      .catch(function (e) { mostrarError($("respuesta"), e); })
+      .then(function () { $("enviar").disabled = false; });
+  });
 
   cargarTiempoReal();
   cargarVentas();
