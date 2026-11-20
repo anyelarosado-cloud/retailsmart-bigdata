@@ -42,7 +42,8 @@ Reglas:
 6. Al final indica entre paréntesis qué herramientas usaste.
 7. No ejecutes acciones (pedidos, cambios de stock): solo informas y recomiendas.
 8. No sumes ni cuentes por tu cuenta cuando exista una herramienta que entregue el total
-   (resumen_reposicion por centro, reposicion_por_categoria por categoría). Si plan_reposicion indica
+   (resumen_reposicion por centro, reposicion_por_categoria por categoría, total_unidades_14_dias
+   del pronóstico). Si plan_reposicion indica
    truncado=true, la lista está incompleta: dilo y no calcules totales con ella.
 9. Si la pregunta no tiene que ver con el negocio de RetailSmart, responde que solo puedes ayudar
    con reposición, pronóstico, alertas de frío, ventas y tiempo real."""
@@ -149,7 +150,9 @@ def construir_herramientas(consultar, texto, entero, traza):
         FROM `{DS}.pronostico_demanda`
         WHERE (@centro IS NULL OR CAST(centro_id AS STRING) = @centro)
         GROUP BY dia ORDER BY dia"""
-        return {"filas": ejecutar(sql, [texto("centro", _centro(centro_id))])}
+        filas = ejecutar(sql, [texto("centro", _centro(centro_id))])
+        total = round(sum(float(f.get("unidades_previstas") or 0) for f in filas), 1)
+        return {"filas": filas, "total_unidades_14_dias": total}
 
     def alertas_frio(minutos: int = 60, centro_id: Optional[str] = None) -> dict:
         """Alertas de cadena de frío recientes (sobretemperatura o cámara sin datos) de los

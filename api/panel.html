@@ -225,6 +225,13 @@
     ], filas));
   }
 
+  // texto del modelo a HTML seguro: escapa todo y solo reconoce **negrita**, `código` y viñetas
+  function formatear(t) {
+    var e = String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return e.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+            .replace(/`([^`]+)`/g, "<code>$1</code>")
+            .replace(/^[ \t]*[*-][ \t]+/gm, "\u2022 ");
+  }
   function cargarTiempoReal() {
     var comun = { minutos: $("minutos").value };
     if ($("pais").value) { comun.pais = $("pais").value; }
@@ -265,7 +272,7 @@
       })
       .then(function (j) {
         $("respuesta").className = "";
-        $("respuesta").textContent = j.respuesta;
+        $("respuesta").innerHTML = formatear(j.respuesta);
         $("herr").textContent = "Herramientas: " + (j.herramientas.map(function (h) { return h.herramienta; }).join(", ") || "ninguna");
       })
       .catch(function (e) { mostrarError($("respuesta"), e); })

@@ -182,3 +182,21 @@ def test_herramientas_devuelven_fechas_y_decimales_serializables_a_json():
         salida = h[nombre]()
         json.dumps(salida)                       # no debe lanzar TypeError
     assert h["pronostico_demanda"]()["filas"][0]["dia"] == "2026-11-21"
+
+
+def test_pronostico_entrega_el_total_calculado_y_no_lo_deja_al_modelo():
+    from datetime import date
+
+    def consultar_falso(sql, params):
+        return [{"dia": date(2026, 11, 21), "unidades_previstas": 309.4, "inferior": 283.0, "superior": 335.8},
+                {"dia": date(2026, 11, 22), "unidades_previstas": 296.2, "inferior": 269.7, "superior": 322.7}]
+
+    traza = []
+    h = {f.__name__: f for f in agente.construir_herramientas(consultar_falso, main.texto, main.entero, traza)}
+    assert h["pronostico_demanda"]()["total_unidades_14_dias"] == 605.6
+
+
+def test_el_panel_formatea_la_respuesta_del_agente_sin_dejar_asteriscos():
+    import pathlib
+    html = (pathlib.Path(__file__).parent / "panel.html").read_text(encoding="utf-8")
+    assert "function formatear" in html and "innerHTML = formatear(j.respuesta)" in html
