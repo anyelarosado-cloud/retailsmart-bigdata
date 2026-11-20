@@ -54,7 +54,8 @@ def test_sql_usa_los_nombres_reales():
 def test_panel_se_sirve_y_usa_rutas_de_la_api():
     r = c.get("/")
     assert r.status_code == 200 and "text/html" in r.headers["content-type"]
-    for ruta in ["/v1/tiempo-real/eventos", "/v1/tiempo-real/productos-top", "/v1/ventas/resumen"]:
+    for ruta in ["/v1/tiempo-real/eventos", "/v1/tiempo-real/productos-top", "/v1/ventas/resumen",
+                 "/v1/tiempo-real/alertas-frio"]:
         assert ruta in r.text
 
 
@@ -140,3 +141,25 @@ def test_plan_marca_truncado_y_hay_herramienta_por_categoria(monkeypatch):
     h2 = {f.__name__: f for f in agente.construir_herramientas(main.consultar, main.texto, main.entero, [])}
     h2["reposicion_por_categoria"](limite=5)
     assert "SUM(reposicion_sugerida)" in llamadas[-1][0] and llamadas[-1][1] == {"limite": 5}
+
+
+def test_alertas_frio_parametros_total_y_tabla_inexistente():
+    def alertas(sql, parametros):
+        llamadas.append((sql, {p.name: p.value for p in parametros}))
+        return [{"ventana_inicio": datetime.datetime(2026, 11, 20, 9, 0), "camara_id": "C01-01", "centro_id": 1,
+                 "regla": "sobretemperatura", "temp_media": 9.1, "temp_max": 10.0, "total": 3}]
+    main.consultar = alertas
+    r = c.get("/v1/tiempo-real/alertas-frio", params={"minutos": 15, "centro_id": 1})
+    assert r.status_code == 200 and llamadas[-1][1] == {"minutos": 15, "centro": "1"}
+    assert "rt_alertas_frio" in llamadas[-1][0]
+    assert r.json()["total"] == 3 and "total" not in r.json()["resultados"][0]
+    c.get("/v1/tiempo-real/alertas-frio")
+    assert llamadas[-1][1] == {"minutos": 60, "centro": None}
+    assert c.get("/v1/tiempo-real/alertas-frio", params={"minutos": 0}).status_code == 422
+    assert c.get("/v1/tiempo-real/alertas-frio", params={"centro_id": 0}).status_code == 422
+
+    def sin_tabla(sql, parametros): raise NotFound("no existe")
+    main.consultar = sin_tabla
+    r = c.get("/v1/tiempo-real/alertas-frio")
+    assert r.status_code == 200 and r.json()["resultados"] == [] and r.json()["total"] == 0
+    main.consultar = falso

@@ -81,6 +81,11 @@
     <div id="productos" class="vacio">Cargando…</div>
   </section>
   <section class="ancho">
+    <h2>Cadena de frío (por centro de distribución)</h2>
+    <div id="frio" class="vacio">Cargando…</div>
+    <div class="sub">Alertas de las cámaras de frío en la ventana elegida; no depende del país.</div>
+  </section>
+  <section class="ancho">
     <h2>Ventas por región</h2>
     <div id="ventas" class="vacio">Cargando…</div>
     <div class="sub">Los montos están en la moneda de origen y no se suman entre monedas.</div>
@@ -182,6 +187,31 @@
     ], filas));
   }
 
+  var REGLAS = { sobretemperatura: "Sobretemperatura", sin_datos: "Sin datos" };
+
+  function dibujarFrio(datos) {
+    var cont = $("frio");
+    cont.className = ""; cont.textContent = "";
+    var filas = datos.resultados || [];
+    if (!filas.length) {
+      cont.className = "vacio";
+      cont.textContent = "Sin alertas de frío en esta ventana.";
+      return;
+    }
+    var camaras = {};
+    filas.forEach(function (f) { camaras[f.camara_id] = true; });
+    var resumen = datos.total + " alertas en " + Object.keys(camaras).length + " cámaras" +
+      (datos.total > filas.length ? " (se muestran las " + filas.length + " más recientes)" : "");
+    cont.appendChild(nodo("div", resumen, "sub"));
+    cont.appendChild(tabla([
+      { titulo: "Hora", valor: function (f) { return new Date(f.ventana_inicio).toLocaleTimeString("es-PE"); } },
+      { titulo: "Cámara", valor: function (f) { return f.camara_id; } },
+      { titulo: "Centro", num: true, valor: function (f) { return String(f.centro_id); } },
+      { titulo: "Regla", valor: function (f) { return REGLAS[f.regla] || f.regla; } },
+      { titulo: "Temp. media (°C)", num: true, valor: function (f) { return f.temp_media === null ? "-" : String(f.temp_media); } }
+    ], filas));
+  }
+
   function dibujarVentas(datos) {
     var cont = $("ventas");
     cont.className = ""; cont.textContent = "";
@@ -201,7 +231,8 @@
     var conLimite = Object.assign({ limite: 8 }, comun);
     var p1 = pedir("/v1/tiempo-real/eventos", comun).then(dibujarEventos).catch(function (e) { mostrarError($("eventos"), e); });
     var p2 = pedir("/v1/tiempo-real/productos-top", conLimite).then(dibujarProductos).catch(function (e) { mostrarError($("productos"), e); });
-    return Promise.all([p1, p2]).then(function () {
+    var p3 = pedir("/v1/tiempo-real/alertas-frio", { minutos: $("minutos").value }).then(dibujarFrio).catch(function (e) { mostrarError($("frio"), e); });
+    return Promise.all([p1, p2, p3]).then(function () {
       $("estado").textContent = "Última actualización: " + new Date().toLocaleTimeString("es-PE") + " (cada 5 segundos)";
     });
   }

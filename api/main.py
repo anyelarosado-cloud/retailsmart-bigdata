@@ -135,6 +135,32 @@ def productos_top(
     return {"minutos": minutos, "pais": pais, "limite": limite, "resultados": filas}
 
 
+@app.get("/v1/tiempo-real/alertas-frio", tags=["tiempo real"])
+def alertas_frio(
+    minutos: int = Query(60, ge=1, le=1440, description="Ventana hacia atrás, en minutos"),
+    centro_id: Optional[int] = Query(None, ge=1, description="Centro de distribución"),
+):
+    """Alertas de la cadena de frío (sobretemperatura o cámara sin datos) de los últimos minutos."""
+    sql = f"""
+    SELECT ventana_inicio, camara_id, centro_id, regla,
+           ROUND(temp_media, 1) AS temp_media, ROUND(temp_max, 1) AS temp_max,
+           COUNT(*) OVER() AS total
+    FROM `{DS}.rt_alertas_frio`
+    WHERE ventana_inicio >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @minutos MINUTE)
+      AND (@centro IS NULL OR CAST(centro_id AS STRING) = @centro)
+    ORDER BY ventana_inicio DESC
+    LIMIT 50"""
+    centro = None if centro_id is None else str(centro_id)
+    try:
+        filas = consultar(sql, [entero("minutos", minutos), texto("centro", centro)])
+    except NotFound:
+        filas = []
+    total = filas[0]["total"] if filas else 0
+    for f in filas:
+        f.pop("total", None)
+    return {"minutos": minutos, "centro_id": centro_id, "total": total, "resultados": filas}
+
+
 class Pregunta(BaseModel):
     pregunta: str
 
