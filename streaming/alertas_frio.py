@@ -15,7 +15,7 @@ event_ts (diferencia de milisegundos).
 
 Salidas en BigQuery (retailsmart_smart):
   rt_sensores_ventana  una fila por cámara y ventana (temperatura media y máxima, lecturas)
-  rt_alertas_frio      una fila por alerta
+  rt_alertas_frio      una fila por alerta (y un registro ALERTA_FRIO en Cloud Logging, base del correo)
   rt_errores           mensajes inválidos y lecturas imposibles, con el motivo
 
 Uso:
@@ -26,6 +26,7 @@ Uso:
 """
 import argparse
 import json
+import logging
 import math
 from datetime import datetime, timezone
 
@@ -128,6 +129,19 @@ class SinDatos(beam.DoFn):
                    "temp_media": None, "temp_max": None, "lecturas": 0, "regla": "sin_datos"}
 
 
+class RegistrarAlerta(beam.DoFn):
+    """Deja un registro por alerta en Cloud Logging y entrega la alerta sin cambios.
+
+    Una política de alertas de Cloud Monitoring busca la marca ALERTA_FRIO en esos registros
+    y envía el correo; así el pipeline no necesita credenciales de correo."""
+
+    def process(self, alerta):
+        logging.warning("ALERTA_FRIO regla=%s camara=%s centro=%s temp_media=%s ventana=%s",
+                        alerta["regla"], alerta["camara_id"], alerta["centro_id"],
+                        alerta["temp_media"], alerta["ventana_inicio"])
+        yield alerta
+
+
 def construir(mensajes, ventana_seg=60, umbral=UMBRAL_C, esperadas=None):
     """mensajes: PCollection de bytes. Devuelve (agregados, alertas, errores)."""
     esperadas = esperadas or camaras_esperadas()
@@ -167,7 +181,8 @@ def correr(args, beam_args):
         agregados, alertas, errores = construir(
             mensajes, args.ventana_seg, args.umbral, camaras_esperadas(args.centros, args.camaras_por_centro))
         agregados | "EscribirVentana" >> escribir(f"{args.dataset}.rt_sensores_ventana", ESQ_VENTANA)
-        alertas | "EscribirAlertas" >> escribir(f"{args.dataset}.rt_alertas_frio", ESQ_ALERTAS)
+        notificadas = alertas | "Notificar" >> beam.ParDo(RegistrarAlerta())
+        notificadas | "EscribirAlertas" >> escribir(f"{args.dataset}.rt_alertas_frio", ESQ_ALERTAS)
         errores | "EscribirErrores" >> escribir(f"{args.dataset}.rt_errores", ESQ_ERRORES)
 
 

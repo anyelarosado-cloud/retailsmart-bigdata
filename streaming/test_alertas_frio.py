@@ -1,5 +1,6 @@
 """Pruebas sin conexión: usan el generador de sensores y el runner local de Beam en modo por lotes."""
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -12,7 +13,7 @@ from apache_beam.transforms.window import TimestampedValue
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ingesta", "simulacion"))
 from generador_iot import CENTROS_APROX, Simulador  # noqa: E402
-from alertas_frio import camaras_esperadas, construir, interpretar  # noqa: E402
+from alertas_frio import RegistrarAlerta, camaras_esperadas, construir, interpretar  # noqa: E402
 
 BASE = datetime(2026, 11, 5, tzinfo=timezone.utc)
 
@@ -47,7 +48,10 @@ def ejecutar(entradas, ventana_seg=60, por_centro=4):
 
 
 def ts(fila, campo):
-    return datetime.fromisoformat(fila[campo]).timestamp()
+    t = datetime.fromisoformat(fila[campo])
+    if t.tzinfo is None:  # las ventanas se guardan en UTC sin zona; no depender de la zona del equipo
+        t = t.replace(tzinfo=timezone.utc)
+    return t.timestamp()
 
 
 def test_interpretar_casos():
@@ -128,3 +132,12 @@ def test_mensajes_malformados_van_a_errores():
 def test_camaras_esperadas():
     c = camaras_esperadas(10, 4)
     assert len(c) == 40 and c[0] == "C01-01" and c[-1] == "C10-04"
+
+
+def test_registrar_alerta_deja_la_marca_en_el_log_y_no_altera_la_alerta(caplog):
+    alerta = {"regla": "sobretemperatura", "camara_id": "C01-01", "centro_id": 1,
+              "temp_media": 9.1, "ventana_inicio": "2026-11-20T09:00:00+00:00"}
+    with caplog.at_level(logging.WARNING):
+        salida = list(RegistrarAlerta().process(alerta))
+    assert salida == [alerta]
+    assert "ALERTA_FRIO" in caplog.text and "C01-01" in caplog.text and "sobretemperatura" in caplog.text
