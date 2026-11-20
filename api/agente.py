@@ -15,6 +15,8 @@ Variables de entorno: PROYECTO, REGION_IA (global), MODELO_IA (gemini-3.5-flash)
 import os
 import time
 from collections import deque
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 
 PROYECTO = os.environ.get("PROYECTO", "retailsmart-bd")
@@ -68,6 +70,15 @@ def _centro(valor):
     return None if valor is None else str(valor)
 
 
+def _json_seguro(valor):
+    """Fechas y decimales de BigQuery a tipos que el SDK del modelo pueda serializar a JSON."""
+    if isinstance(valor, (datetime, date)):
+        return valor.isoformat()
+    if isinstance(valor, Decimal):
+        return float(valor)
+    return valor
+
+
 def construir_herramientas(consultar, texto, entero, traza):
     """Crea las herramientas que verá el modelo. `traza` registra cada llamada."""
     from google.api_core.exceptions import NotFound
@@ -77,9 +88,10 @@ def construir_herramientas(consultar, texto, entero, traza):
 
     def ejecutar(sql, params):
         try:
-            return consultar(sql, params)
+            filas = consultar(sql, params)
         except NotFound:
             return []
+        return [{k: _json_seguro(v) for k, v in fila.items()} for fila in filas]
 
     def plan_reposicion(centro_id: Optional[str] = None, categoria: Optional[str] = None,
                         limite: int = 10) -> dict:

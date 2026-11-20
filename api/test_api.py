@@ -163,3 +163,22 @@ def test_alertas_frio_parametros_total_y_tabla_inexistente():
     r = c.get("/v1/tiempo-real/alertas-frio")
     assert r.status_code == 200 and r.json()["resultados"] == [] and r.json()["total"] == 0
     main.consultar = falso
+
+
+def test_herramientas_devuelven_fechas_y_decimales_serializables_a_json():
+    """El SDK del modelo hace json.dumps de lo que devuelven las herramientas: una fecha de BigQuery
+    (columna dia del pronóstico) o una marca de tiempo (alertas) no debe romper la respuesta."""
+    import json
+    from datetime import date, datetime, timezone
+    from decimal import Decimal
+
+    def consultar_falso(sql, params):
+        return [{"dia": date(2026, 11, 21), "ventana_inicio": datetime(2026, 11, 20, 19, 45, tzinfo=timezone.utc),
+                 "unidades_previstas": Decimal("12.5")}]
+
+    traza = []
+    h = {f.__name__: f for f in agente.construir_herramientas(consultar_falso, main.texto, main.entero, traza)}
+    for nombre in ("pronostico_demanda", "alertas_frio"):
+        salida = h[nombre]()
+        json.dumps(salida)                       # no debe lanzar TypeError
+    assert h["pronostico_demanda"]()["filas"][0]["dia"] == "2026-11-21"
