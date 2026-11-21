@@ -1,6 +1,8 @@
 # RetailSmart Global: plataforma de datos
 
-Back-end de datos para RetailSmart: integra tres fuentes públicas y tres fuentes simuladas en un Lakehouse, procesa en batch y en streaming, y expone los resultados mediante una API y un panel web. 
+Back-end de datos para RetailSmart: integra tres fuentes públicas y tres fuentes simuladas en un Lakehouse, procesa en batch y en streaming, pronostica la demanda, sugiere reposición y expone los resultados mediante una API, un panel web y un asistente de IA generativa.
+
+Proyecto de Google Cloud `retailsmart-bd`, región `us-central1`.
 
 ## Arquitectura
 
@@ -11,7 +13,11 @@ Back-end de datos para RetailSmart: integra tres fuentes públicas y tres fuente
 | Cómputo batch | Apache Spark en Dataproc | Apache Spark |
 | Cómputo streaming | Apache Beam en Dataflow: agregados de clics y alertas de frío | Apache Flink |
 | Almacenamiento | Cloud Storage con tablas Apache Iceberg (Landing, Universal, Smart) y BigQuery | MinIO con Iceberg, Trino o ClickHouse |
+| Pronóstico y reposición | BigQuery ML (ARIMA_PLUS) y tabla `plan_reposicion` | Prophet o statsforecast |
 | Exposición | FastAPI en Cloud Run y panel web | FastAPI en Kubernetes |
+| Asistente | Gemini en Vertex AI con herramientas sobre BigQuery | Modelo abierto con llamadas a herramientas |
+| Red | VPC `vpc-retailsmart` con subred `sn-datos`, sin IP externa y salida por Cloud NAT | Red privada con NAT |
+| Orquestación del lote | Diseño de producción con Cloud Composer (no implementado) | Airflow |
 
 Zonas del lago: **Landing** (crudo e inmutable), **Universal** (limpio, tipado y sin duplicados, con tabla de cuarentena por entidad) y **Smart** (esquema en estrella: `fact_ventas` y cinco dimensiones conformadas).
 
@@ -34,12 +40,13 @@ Los clics se reproducen hacia Pub/Sub con marcas de tiempo actuales (`ingesta/pr
 ## Estructura
 
 ```
-api/          API FastAPI, panel web, Dockerfile y pruebas
+api/          API FastAPI, panel web, asistente de reposición (agente.py), Dockerfile y pruebas
 contratos/    contrato de datos de fact_ventas y reglas de calidad
 ingesta/      productor de clics y simulador de ERP, sensores y GPS
 spark/        notebooks de Landing -> Universal -> Smart (00 a 05)
-sql/          metadatos de Smart, consultas de verificación y pronóstico de demanda
-streaming/    pipelines Apache Beam: agregados por ventana y alertas de frío
+sql/          metadatos de Smart, consultas de verificación y pronóstico de demanda (sql/ml)
+streaming/    pipelines Apache Beam: agregados por ventana, alertas de frío y notificación por correo
+docs/         guía del demo, estimación de costos y entregables (informe y presentación)
 ```
 
 ## Resultados verificados
@@ -52,60 +59,82 @@ streaming/    pipelines Apache Beam: agregados por ventana y alertas de frío
 | ERP simulado | `erp_stock` y `erp_plazos` con 29.060 productos; cobertura de 7,5 a 22,5 días por centro; `demanda_diaria_centro` sin huecos |
 | Alertas de frío | 8 de 8 fallas inyectadas detectadas; 23 alertas, ninguna sin falla; tiempo medio de detección de 51 s; 174 lecturas imposibles en `rt_errores` |
 | Catálogo | Las seis tablas de Smart con descripción de tabla y de columna, y etiquetas de dominio, zona y sensibilidad |
+| Pronóstico | ARIMA_PLUS por centro, entrenado hasta el 10 de octubre de 2026; WAPE de 0,238 frente a 0,209 de la línea base de 28 días, por lo que la meta no se cumple |
+| Plan de reposición | 606 unidades sugeridas en 123 de 256 combinaciones de centro y categoría; el asistente responde con las mismas cifras de la tabla |
+| Red y autoescalado | Los jobs `agregados-eventos-vpc` y `alertas-frio` corren en `sn-datos` sin IP externa; el de clics escaló de uno a tres workers bajo carga |
+| Notificación | La alerta de sobretemperatura llega por correo desde Cloud Monitoring (`streaming/ALERTAS_POR_CORREO.md`) |
 | API | Endpoints probados contra BigQuery; las cifras coinciden con `fact_ventas` y con los agregados de streaming |
 
-## Ejecutar la API
+# Demo de extremo a extremo
+
+Flujo: clics y sensores publicados en Pub/Sub, procesados por Dataflow, escritos en BigQuery y vistos en el panel, con una alerta de frío por correo y preguntas al asistente de reposición.
+
+## 1. Revisar qué está encendido
 
 ```bash
-cd api
-pip install -r requirements.txt pytest httpx
-python -m pytest -q test_api.py
+gcloud dataflow jobs list --region=us-central1 --status=active
+gcloud run services list --region=us-central1
+gcloud dataproc clusters list --region=us-central1
 ```
 
-Despliegue en Cloud Run (requiere el proyecto y las tablas de BigQuery):
+## 2. Iniciar los servicios
+
+Jobs de Dataflow (cada comando queda ejecutándose mientras el job vive; el job continúa en Google Cloud aunque Cloud Shell se cierre). El job aparece como `Running` entre 3 y 6 minutos después de lanzarse:
 
 ```bash
-gcloud run deploy api-retailsmart --source . --region us-central1 \
-  --service-account=$SA_API --no-allow-unauthenticated --max-instances=2 --memory=512Mi
-gcloud run services proxy api-retailsmart --region us-central1   # panel en http://localhost:8080/
-```
+# Clics
+python3 streaming/agregados_eventos.py --runner=DataflowRunner --project=retailsmart-bd --region=us-central1 \
+  --temp_location=gs://retailsmart-lake-retailsmart-bd/tmp/dataflow \
+  --staging_location=gs://retailsmart-lake-retailsmart-bd/tmp/staging \
+  --job_name=agregados-eventos-vpc --network=vpc-retailsmart \
+  --subnetwork=regions/us-central1/subnetworks/sn-datos --no_use_public_ips \
+  --num_workers=1 --max_num_workers=3 --autoscaling_algorithm=THROUGHPUT_BASED --ventana_seg=60
 
-## Datos simulados y alertas de frío
-
-```bash
-cd ingesta/simulacion
-python3 cargar_erp.py --landing                                   # stock, plazos, demanda y stock operativo
-python3 generador_iot.py --ticks 600 --verdad verdad_fallas.json  # sensores y GPS hacia Pub/Sub
-```
-
-Antes de publicar se crean los tópicos y las suscripciones (`sensores-beam` y `gps-beam`); los comandos están en `ingesta/simulacion/README.md`. El pipeline de alertas y su medición:
-
-```bash
+# Alertas de frío
 python3 streaming/alertas_frio.py --runner=DataflowRunner --project=retailsmart-bd --region=us-central1 \
   --temp_location=gs://retailsmart-lake-retailsmart-bd/tmp/dataflow \
   --staging_location=gs://retailsmart-lake-retailsmart-bd/tmp/staging \
-  --job_name=alertas-frio --num_workers=1 --max_num_workers=1 --ventana_seg=30
-python3 streaming/medir_deteccion.py --verdad ingesta/simulacion/verdad_fallas.json
+  --job_name=alertas-frio --num_workers=1 --max_num_workers=1 --ventana_seg=30 \
+  --subnetwork=regions/us-central1/subnetworks/sn-datos --no_use_public_ips
 ```
 
-## Pruebas
+Si un job con el mismo nombre sigue activo, Dataflow responde que ya existe: cancélalo antes con `gcloud dataflow jobs cancel <ID> --region=us-central1`.
+
+Cloud Run sin arranque en frío durante la demo:
 
 ```bash
-pip install -r streaming/requirements.txt
-python -m pytest -q ingesta/simulacion streaming      # 18 pruebas sin conexión
-cd api && python -m pytest -q test_api.py
+gcloud run services update api-retailsmart --region=us-central1 --min-instances=1
 ```
 
-## Supuestos y limitaciones
+## 3. Generar tráfico
 
-- Los montos se conservan en la moneda de origen (BRL, GBP y USD) y no se suman entre fuentes.
-- Las ocho regiones logísticas no vienen en los datos; se definieron en el modelo (cinco macrorregiones de Brasil, Norteamérica, Europa y Asia-Pacífico y resto).
-- UCI no identifica al cliente en cerca de una cuarta parte de sus líneas.
-- El stock del ERP, los sensores de frío y el GPS son simulados con semilla fija. El stock se reescala a una cobertura de 5 a 25 días a partir de la demanda real del último año, porque el inventario original de thelook equivale a casi cuatro años de demanda.
-- El GPS se publica en Pub/Sub; ningún pipeline lo procesa todavía.
-- Las alertas de frío usan la hora de publicación en Pub/Sub como tiempo del evento, que en el generador coincide con `event_ts`.
-- El rendimiento de streaming se probó con un worker a 100 mensajes por segundo; no se probó un ritmo mayor.
-- El catálogo Iceberg es de tipo Hadoop; en producción debe sustituirse por un catálogo gestionado para soportar escrituras concurrentes.
+```bash
+# Clics continuos durante 15 minutos
+python3 ingesta/productor_eventos.py --duracion 900 --rate 40
+
+# Sensores de frío con fallas inyectadas (desde ingesta/simulacion)
+python3 generador_iot.py --ticks 150
+```
+
+El primer correo de alerta llega uno o dos minutos después de la primera alerta de sobretemperatura y luego como máximo uno cada cinco minutos. No repitas la prueba de correo antes de que pasen diez minutos de la anterior.
+
+## 4. Abrir el panel
+
+```bash
+gcloud config set project retailsmart-bd
+gcloud run services proxy api-retailsmart --region us-central1    # panel en http://localhost:8080/
+```
+
+El proxy desde Cloud Shell se cae tras unos 20 minutos de inactividad; desde la laptop se mantiene. El panel se actualiza solo cada cinco segundos; las ventas se cargan una vez. Los agregados de clics usan ventanas de 60 segundos, así que el panel va uno o dos minutos por detrás: selecciona «Últimos 15 minutos».
+
+## 5. Detener todo al terminar
+
+```bash
+gcloud dataflow jobs list --region=us-central1 --status=active --format="value(JOB_ID)" \
+  | xargs -r gcloud dataflow jobs cancel --region=us-central1
+gcloud run services update api-retailsmart --region=us-central1 --min-instances=0
+gcloud dataproc clusters list --region=us-central1      # debe estar vacío
+```
 
 ## Equipo
 
